@@ -14,8 +14,8 @@ android {
         // IMPORTANT: bump versionCode by 1 every release so it installs as an
         // UPDATE over the existing app instead of needing an uninstall.
         // versionName is just the human-readable label — update it too.
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.1.1"
     }
 
     signingConfigs {
