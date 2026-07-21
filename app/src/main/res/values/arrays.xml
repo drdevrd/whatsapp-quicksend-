@@ -1,0 +1,7 @@
+<resources>
+    <string-array name="repeat_options">
+        <item>Does not repeat</item>
+        <item>Daily</item>
+        <item>Weekly</item>
+    </string-array>
+</resources>
