@@ -26,7 +26,7 @@ class MainActivity : AppCompatActivity() {
 
     private val pickContactLauncher =
         registerForActivityResult(ActivityResultContracts.PickContact()) { uri: Uri? ->
-            uri?.let { readContactPhone(it) }
+            uri?.let { readContact(it) }
         }
 
     private val requestContactsPermission =
@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // If opened from a scheduled reminder notification, prefill the fields
+        intent.getStringExtra(EXTRA_NAME)?.let { binding.etName.setText(it) }
         intent.getStringExtra(EXTRA_PHONE)?.let { binding.etPhone.setText(it) }
         intent.getStringExtra(EXTRA_MSG)?.let { binding.etMessage.setText(it) }
 
@@ -61,6 +62,22 @@ class MainActivity : AppCompatActivity() {
         binding.btnPickContact.setOnClickListener { checkContactsPermissionAndPick() }
         binding.btnSend.setOnClickListener { sendToWhatsApp() }
         binding.btnSchedule.setOnClickListener { pickDateTime() }
+
+        refreshReminderList()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshReminderList()
+    }
+
+    private fun refreshReminderList() {
+        val entries = ReminderStore.readAll(this).sortedBy { it.triggerAtMillis }
+        binding.tvReminderList.text = if (entries.isEmpty()) {
+            "No reminders scheduled yet."
+        } else {
+            entries.joinToString("\n") { "• " + ReminderStore.formatEntry(it) }
+        }
     }
 
     private fun checkContactsPermissionAndPick() {
@@ -75,13 +92,17 @@ class MainActivity : AppCompatActivity() {
         pickContactLauncher.launch(null)
     }
 
-    private fun readContactPhone(contactUri: Uri) {
+    private fun readContact(contactUri: Uri) {
         contentResolver.query(contactUri, null, null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 val idIdx = cursor.getColumnIndex(ContactsContract.Contacts._ID)
+                val nameIdx = cursor.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME)
                 val hasPhoneIdx = cursor.getColumnIndex(ContactsContract.Contacts.HAS_PHONE_NUMBER)
                 if (idIdx < 0 || hasPhoneIdx < 0) return
                 val contactId = cursor.getString(idIdx)
+                val displayName = if (nameIdx >= 0) cursor.getString(nameIdx) else null
+                displayName?.let { binding.etName.setText(it) }
+
                 val hasPhone = cursor.getInt(hasPhoneIdx)
                 if (hasPhone > 0) {
                     contentResolver.query(
@@ -145,19 +166,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun scheduleReminder(triggerAtMillis: Long) {
+        val name = binding.etName.text.toString().trim()
         val phone = binding.etPhone.text.toString().trim()
         val message = binding.etMessage.text.toString()
 
+        if (phone.isEmpty()) {
+            Toast.makeText(this, "Enter or pick a phone number first", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val recurrence = binding.spinnerRepeat.selectedItemPosition // 0=none, 1=daily, 2=weekly
+        val id = ReminderStore.nextId(this) // unique per reminder, so multiple can coexist
 
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val reminderIntent = Intent(this, ReminderReceiver::class.java).apply {
+            putExtra(EXTRA_ID, id)
+            putExtra(EXTRA_NAME, name)
             putExtra(EXTRA_PHONE, phone)
             putExtra(EXTRA_MSG, message)
             putExtra(EXTRA_RECURRENCE, recurrence)
         }
         val pendingIntent = PendingIntent.getBroadcast(
-            this, REQUEST_CODE, reminderIntent,
+            this, id, reminderIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -176,6 +206,13 @@ class MainActivity : AppCompatActivity() {
                     AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent
                 )
             }
+
+            ReminderStore.add(
+                this,
+                ReminderEntry(id, name, phone, message, triggerAtMillis, recurrence)
+            )
+            refreshReminderList()
+
             val repeatLabel = when (recurrence) {
                 1 -> " (repeats daily)"
                 2 -> " (repeats weekly)"
@@ -188,9 +225,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        const val EXTRA_ID = "extra_id"
+        const val EXTRA_NAME = "extra_name"
         const val EXTRA_PHONE = "extra_phone"
         const val EXTRA_MSG = "extra_msg"
         const val EXTRA_RECURRENCE = "extra_recurrence" // 0=none, 1=daily, 2=weekly
-        const val REQUEST_CODE = 1001
     }
 }

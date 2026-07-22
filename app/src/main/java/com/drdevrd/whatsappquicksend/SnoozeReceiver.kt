@@ -12,26 +12,30 @@ import android.widget.Toast
 class SnoozeReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        val name = intent.getStringExtra(MainActivity.EXTRA_NAME) ?: ""
         val phone = intent.getStringExtra(MainActivity.EXTRA_PHONE) ?: ""
         val message = intent.getStringExtra(MainActivity.EXTRA_MSG) ?: ""
+        val originalNotifId = intent.getIntExtra("notif_id", 0)
+        val snoozeId = intent.getIntExtra(MainActivity.EXTRA_ID, originalNotifId + ReminderReceiver.SNOOZE_ID_OFFSET)
 
-        // Dismiss the current notification
         val notificationManager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.cancel(MainActivity.REQUEST_CODE)
+        notificationManager.cancel(originalNotifId)
 
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val triggerAt = System.currentTimeMillis() + 10 * 60 * 1000 // 10 minutes
 
-        // Snoozed occurrence never carries recurrence forward — the next
-        // regular occurrence was already armed by ReminderReceiver if needed.
+        // Snoozed occurrence never carries recurrence forward — the regular
+        // next occurrence (if any) was already armed by ReminderReceiver.
         val snoozedIntent = Intent(context, ReminderReceiver::class.java).apply {
+            putExtra(MainActivity.EXTRA_ID, snoozeId)
+            putExtra(MainActivity.EXTRA_NAME, name)
             putExtra(MainActivity.EXTRA_PHONE, phone)
             putExtra(MainActivity.EXTRA_MSG, message)
             putExtra(MainActivity.EXTRA_RECURRENCE, 0)
         }
         val pendingIntent = PendingIntent.getBroadcast(
-            context, MainActivity.REQUEST_CODE + 2, snoozedIntent,
+            context, snoozeId, snoozedIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 

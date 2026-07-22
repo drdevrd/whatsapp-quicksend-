@@ -14,20 +14,26 @@ import java.util.Calendar
 class ReminderReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        val id = intent.getIntExtra(MainActivity.EXTRA_ID, 0)
+        val name = intent.getStringExtra(MainActivity.EXTRA_NAME) ?: ""
         val phone = intent.getStringExtra(MainActivity.EXTRA_PHONE) ?: ""
         val message = intent.getStringExtra(MainActivity.EXTRA_MSG) ?: ""
         val recurrence = intent.getIntExtra(MainActivity.EXTRA_RECURRENCE, 0)
 
-        // If this reminder repeats, arm the NEXT occurrence now, before showing
-        // this notification, so it's not lost even if the phone is put away.
         if (recurrence != 0) {
-            rescheduleNext(context, phone, message, recurrence)
+            // Repeating reminder: arm the next occurrence and update the stored entry's time.
+            rescheduleNext(context, id, name, phone, message, recurrence)
+        } else {
+            // One-time reminder: it has fired, remove it from the visible list.
+            ReminderStore.remove(context, id)
         }
 
-        showNotification(context, phone, message, recurrence)
+        showNotification(context, id, name, phone, message)
     }
 
-    private fun rescheduleNext(context: Context, phone: String, message: String, recurrence: Int) {
+    private fun rescheduleNext(
+        context: Context, id: Int, name: String, phone: String, message: String, recurrence: Int
+    ) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val next = Calendar.getInstance().apply {
             when (recurrence) {
@@ -36,12 +42,14 @@ class ReminderReceiver : BroadcastReceiver() {
             }
         }
         val nextIntent = Intent(context, ReminderReceiver::class.java).apply {
+            putExtra(MainActivity.EXTRA_ID, id)
+            putExtra(MainActivity.EXTRA_NAME, name)
             putExtra(MainActivity.EXTRA_PHONE, phone)
             putExtra(MainActivity.EXTRA_MSG, message)
             putExtra(MainActivity.EXTRA_RECURRENCE, recurrence)
         }
         val pendingIntent = PendingIntent.getBroadcast(
-            context, MainActivity.REQUEST_CODE, nextIntent,
+            context, id, nextIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         try {
@@ -50,12 +58,15 @@ class ReminderReceiver : BroadcastReceiver() {
             } else {
                 alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.timeInMillis, pendingIntent)
             }
+            // Update the stored entry so the on-screen list shows the next occurrence time.
+            ReminderStore.remove(context, id)
+            ReminderStore.add(context, ReminderEntry(id, name, phone, message, next.timeInMillis, recurrence))
         } catch (e: SecurityException) {
             // Exact alarm permission revoked; silently skip re-arming.
         }
     }
 
-    private fun showNotification(context: Context, phone: String, message: String, recurrence: Int) {
+    private fun showNotification(context: Context, id: Int, name: String, phone: String, message: String) {
         val channelId = "wa_quick_send_reminders"
         val notificationManager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -69,26 +80,32 @@ class ReminderReceiver : BroadcastReceiver() {
 
         val openIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(MainActivity.EXTRA_NAME, name)
             putExtra(MainActivity.EXTRA_PHONE, phone)
             putExtra(MainActivity.EXTRA_MSG, message)
         }
         val contentPendingIntent = PendingIntent.getActivity(
-            context, MainActivity.REQUEST_CODE, openIntent,
+            context, id, openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val snoozeIntent = Intent(context, SnoozeReceiver::class.java).apply {
+            putExtra(MainActivity.EXTRA_ID, id + SNOOZE_ID_OFFSET)
+            putExtra(MainActivity.EXTRA_NAME, name)
             putExtra(MainActivity.EXTRA_PHONE, phone)
             putExtra(MainActivity.EXTRA_MSG, message)
+            putExtra("notif_id", id)
         }
         val snoozePendingIntent = PendingIntent.getBroadcast(
-            context, MainActivity.REQUEST_CODE + 1, snoozeIntent,
+            context, id + SNOOZE_ID_OFFSET, snoozeIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val title = if (name.isNotBlank()) "WhatsApp reminder — $name" else "WhatsApp reminder"
+
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_email)
-            .setContentTitle("WhatsApp reminder")
+            .setContentTitle(title)
             .setContentText("Tap to review and send your message")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
@@ -96,6 +113,12 @@ class ReminderReceiver : BroadcastReceiver() {
             .addAction(android.R.drawable.ic_popup_reminder, "Snooze 10 min", snoozePendingIntent)
             .build()
 
-        notificationManager.notify(MainActivity.REQUEST_CODE, notification)
+        notificationManager.notify(id, notification)
+    }
+
+    companion object {
+        // Offsets keep snooze/notification pending-intent request codes from colliding
+        // with the main reminder's own id.
+        const val SNOOZE_ID_OFFSET = 500000
     }
 }
