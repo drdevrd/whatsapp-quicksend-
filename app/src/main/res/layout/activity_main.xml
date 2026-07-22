@@ -120,13 +120,19 @@
             android:textStyle="bold" />
 
         <TextView
-            android:id="@+id/tvReminderList"
-            android:layout_width="match_parent"
+            android:id="@+id/tvNoReminders"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="No reminders scheduled yet."
-            android:textSize="14sp"
-            android:lineSpacingExtra="4dp" />
+            android:textSize="14sp" />
+
+        <LinearLayout
+            android:id="@+id/llReminderList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical" />
 
     </LinearLayout>
 
