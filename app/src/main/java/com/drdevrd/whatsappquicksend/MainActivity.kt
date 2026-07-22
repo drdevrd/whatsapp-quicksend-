@@ -12,7 +12,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.ContactsContract
+import android.view.LayoutInflater
 import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -73,11 +76,37 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshReminderList() {
         val entries = ReminderStore.readAll(this).sortedBy { it.triggerAtMillis }
-        binding.tvReminderList.text = if (entries.isEmpty()) {
-            "No reminders scheduled yet."
-        } else {
-            entries.joinToString("\n") { "• " + ReminderStore.formatEntry(it) }
+        binding.llReminderList.removeAllViews()
+
+        if (entries.isEmpty()) {
+            binding.tvNoReminders.visibility = android.view.View.VISIBLE
+            return
         }
+        binding.tvNoReminders.visibility = android.view.View.GONE
+
+        val inflater = LayoutInflater.from(this)
+        for (entry in entries) {
+            val row = inflater.inflate(R.layout.item_reminder, binding.llReminderList, false)
+            row.findViewById<TextView>(R.id.tvEntryText).text = "• " + ReminderStore.formatEntry(entry)
+            row.findViewById<Button>(R.id.btnCancelEntry).setOnClickListener {
+                cancelReminder(entry.id)
+            }
+            binding.llReminderList.addView(row)
+        }
+    }
+
+    private fun cancelReminder(id: Int) {
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val reminderIntent = Intent(this, ReminderReceiver::class.java)
+        val pendingIntent = PendingIntent.getBroadcast(
+            this, id, reminderIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        alarmManager.cancel(pendingIntent)
+        pendingIntent.cancel()
+        ReminderStore.remove(this, id)
+        refreshReminderList()
+        Toast.makeText(this, "Reminder cancelled", Toast.LENGTH_SHORT).show()
     }
 
     private fun checkContactsPermissionAndPick() {
@@ -159,13 +188,14 @@ class MainActivity : AppCompatActivity() {
             TimePickerDialog(this, { _, hour, minute ->
                 val cal = Calendar.getInstance().apply {
                     set(year, month, day, hour, minute, 0)
+                    set(Calendar.MILLISECOND, 0)
                 }
                 scheduleReminder(cal.timeInMillis)
             }, now.get(Calendar.HOUR_OF_DAY), now.get(Calendar.MINUTE), true).show()
         }, now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH)).show()
     }
 
-    private fun scheduleReminder(triggerAtMillis: Long) {
+    private fun scheduleReminder(pickedMillis: Long) {
         val name = binding.etName.text.toString().trim()
         val phone = binding.etPhone.text.toString().trim()
         val message = binding.etMessage.text.toString()
@@ -176,6 +206,23 @@ class MainActivity : AppCompatActivity() {
         }
 
         val recurrence = binding.spinnerRepeat.selectedItemPosition // 0=none, 1=daily, 2=weekly
+
+        // If the picked time has already passed today, don't silently let the
+        // system treat it as overdue and jump ahead unexpectedly. Roll it
+        // forward to the next valid occurrence and tell the user clearly.
+        var triggerAtMillis = pickedMillis
+        var rolledForward = false
+        if (triggerAtMillis <= System.currentTimeMillis()) {
+            rolledForward = true
+            val cal = Calendar.getInstance().apply { timeInMillis = triggerAtMillis }
+            when (recurrence) {
+                1 -> cal.add(Calendar.DAY_OF_YEAR, 1)
+                2 -> cal.add(Calendar.WEEK_OF_YEAR, 1)
+                else -> cal.add(Calendar.DAY_OF_YEAR, 1) // one-time: assume they meant tomorrow
+            }
+            triggerAtMillis = cal.timeInMillis
+        }
+
         val id = ReminderStore.nextId(this) // unique per reminder, so multiple can coexist
 
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -218,7 +265,11 @@ class MainActivity : AppCompatActivity() {
                 2 -> " (repeats weekly)"
                 else -> ""
             }
-            binding.tvScheduledInfo.text = "Reminder set for the chosen time$repeatLabel."
+            binding.tvScheduledInfo.text = if (rolledForward) {
+                "That time already passed today — first reminder set for tomorrow instead$repeatLabel."
+            } else {
+                "Reminder set for the chosen time$repeatLabel."
+            }
         } catch (e: SecurityException) {
             Toast.makeText(this, "Could not schedule: permission denied", Toast.LENGTH_SHORT).show()
         }
